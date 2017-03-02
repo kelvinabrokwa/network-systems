@@ -44,11 +44,30 @@ public class MyWebServer {
             System.exit(1);
         }
 
-        SimpleDateFormat HTTPDateFormat = new SimpleDateFormat("EEE, d MMM yyyy hh:mm:ss zzz");
 
         // wait for a connectiona and then accept it
         while (true) {
-            try (Socket socket = serverSocket.accept()) {
+            try {
+                Socket socket = serverSocket.accept();
+                HTTPConnection connection = new HTTPConnection(socket);
+                connection.run();
+            }
+            catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public static class HTTPConnection implements Runnable {
+        private Socket socket;
+        private SimpleDateFormat HTTPDateFormat = new SimpleDateFormat("EEE, d MMM yyyy hh:mm:ss zzz");
+
+        HTTPConnection(Socket socket) {
+            this.socket = socket;
+        }
+
+        public void run() {
+            try {
                 Header header = new Header();
 
                 BufferedReader bin = new BufferedReader(new InputStreamReader(socket.getInputStream()));
@@ -63,14 +82,14 @@ public class MyWebServer {
                 catch (Exception e) {
                     ostream.write(header.setStatus("HTTP/1.1 400 Bad Request").toString().getBytes());
                     ostream.write(badRequestHTML.getBytes());
-                    continue;
+                    return;
                 }
 
                 if (!reqType.equals("GET") && !reqType.equals("HEAD")) {
                     header.setStatus("HTTP/1.1 501 Not Implemented");
                     ostream.write(header.toString().getBytes());
                     ostream.write(notImplementedHTML.getBytes());
-                    continue;
+                    return;
                 }
 
                 // try to open file
@@ -82,7 +101,7 @@ public class MyWebServer {
                     header.setStatus("HTTP/1.1 404 Not Found");
                     ostream.write(header.toString().getBytes());
                     ostream.write(fileNotFoundHTML.getBytes());
-                    continue;
+                    return;
                 }
 
                 if (reqFile.isDirectory()) {
@@ -119,20 +138,20 @@ public class MyWebServer {
                                 .setLastModified(lastModified)
                                 .setContentLength(file.length());
                             ostream.write(header.toString().getBytes());
-                            continue;
+                            return;
                         }
                     }
                 }
                 catch (Exception e) {
                     ostream.write(header.setStatus("HTTP/1.1 400 Bad Request").toString().getBytes());
                     ostream.write(badRequestHTML.getBytes());
-                    continue;
+                    return;
                 }
 
                 // write response header
                 header.setStatus("HTTP/1.1 200 OK")
-                      .setLastModified(lastModified)
-                      .setContentLength(file.length());
+                    .setLastModified(lastModified)
+                    .setContentLength(file.length());
                 ostream.write(header.toString().getBytes());
 
                 if (reqType.equals("GET")) {
@@ -150,6 +169,14 @@ public class MyWebServer {
             catch (IOException e) {
                 System.err.println(e.getMessage());
                 e.printStackTrace();
+            }
+            finally {
+                try {
+                    socket.close();
+                }
+                catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         }
     }
