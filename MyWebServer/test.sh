@@ -10,3 +10,4 @@ curl -i http://localhost:8817/foobar -H "If-Modified-Since: Sat, 29 Oct 1994 00:
 curl -i http://localhost:8817/foobar -H "If-Modified-Since: bad date"
 curl -i http://localhost:8817/foobar -H "If-Modified-Since"
 curl -i -X PUT http://localhost:8817/foobaradf
+curl -i http://localhost:8817/test-dir

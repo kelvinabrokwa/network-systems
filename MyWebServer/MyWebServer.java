@@ -17,9 +17,9 @@ import java.text.ParseException;
 
 public class MyWebServer {
 
-    private static String fileNotFoundHTML= "File not found";
-    private static String notImplementedHTML= "Not Implemented";
-    private static String serverName = "Young Money Cash Money: The Server";
+    private static String badRequestHTML = "<!DOCTYPE html><html lang=en><title>400 - Bad Request</title><style>.big{font-size:10em}.red{color:red}.center{text-align:center}</style><div class='big center red'>400 - Bad Request</div>";
+    private static String fileNotFoundHTML= "<!DOCTYPE html><html lang=en><title>404 - File Not Found</title><style>.big{font-size:10em}.red{color:red}.center{text-align:center}</style><div class='big center red'>404 - Not Found</div>";
+    private static String notImplementedHTML= "<!DOCTYPE html><html lang=en><title>501 - Not Implemented</title><style>.big{font-size:10em}.red{color:red}.center{text-align:center}</style><div class='big center red'>501 - Not Implemented</div>";
 
     public static void main(String[] args) throws IOException{
         if (args.length != 2) {
@@ -62,25 +62,41 @@ public class MyWebServer {
                 }
                 catch (Exception e) {
                     ostream.write(header.setStatus("HTTP/1.1 400 Bad Request").toString().getBytes());
+                    ostream.write(badRequestHTML.getBytes());
                     continue;
                 }
 
                 if (!reqType.equals("GET") && !reqType.equals("HEAD")) {
                     header.setStatus("HTTP/1.1 501 Not Implemented");
                     ostream.write(header.toString().getBytes());
+                    ostream.write(notImplementedHTML.getBytes());
                     continue;
                 }
 
                 // try to open file
-                File file = new File(fileName);
-                Date lastModified = new Date(file.lastModified());
+                File reqFile = new File(fileName);
+                File file = null;
 
                 // file not found
-                if (!file.exists()) {
+                if (!reqFile.exists()) {
                     header.setStatus("HTTP/1.1 404 Not Found");
                     ostream.write(header.toString().getBytes());
+                    ostream.write(fileNotFoundHTML.getBytes());
                     continue;
                 }
+
+                if (reqFile.isDirectory()) {
+                    String[] files = reqFile.list();
+                    for (int i = 0; i < files.length; i++) {
+                        if (files[i].equals("index.html")) {
+                            file = new File(fileName + "/index.html");
+                        }
+                    }
+                } else {
+                    file = reqFile;
+                }
+
+                Date lastModified = new Date(file.lastModified());
 
                 String headerLine = bin.readLine();
 
@@ -109,9 +125,9 @@ public class MyWebServer {
                 }
                 catch (Exception e) {
                     ostream.write(header.setStatus("HTTP/1.1 400 Bad Request").toString().getBytes());
+                    ostream.write(badRequestHTML.getBytes());
                     continue;
                 }
-
 
                 // write response header
                 header.setStatus("HTTP/1.1 200 OK")

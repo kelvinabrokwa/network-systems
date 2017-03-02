@@ -12,8 +12,8 @@ public class Client{
         OutputStream out;
         PrintWriter pout;
         try {
-            server = new Socket("~/myweb/", 8817);
-            
+            server = new Socket("127.0.0.1", 8817);
+
             //in = server.getInputStream();
             out = server.getOutputStream();
 
