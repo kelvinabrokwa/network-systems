@@ -115,6 +115,14 @@ public class MyWebServer {
                     file = reqFile;
                 }
 
+                // user requested a directory that doesn't contain index.html
+                if (file == null) {
+                    header.setStatus("HTTP/1.1 404 Not Found");
+                    ostream.write(header.toString().getBytes());
+                    ostream.write(fileNotFoundHTML.getBytes());
+                    return;
+                }
+
                 Date lastModified = new Date(file.lastModified());
 
                 String headerLine = bin.readLine();
