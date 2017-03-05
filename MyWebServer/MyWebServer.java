@@ -26,7 +26,16 @@ public class MyWebServer {
             System.err.println("Usage: java MyWebServer <port number> <directory>");
             System.exit(1);
         }
-        int port = Integer.parseInt(args[0]);
+
+        // Parse port numbers
+        int port = -1;
+        try {
+            port = Integer.parseInt(args[0]);
+            if (port < 0) throw new NumberFormatException("server: Failed to resolve port number.");
+        } catch (NumberFormatException e) {
+            System.err.println("server: Invalid port number: " + args[0]);
+            System.exit(1);
+        }
         String dir = args[1];
 
         System.out.println("Server is listening on port :" + port);
@@ -47,8 +56,7 @@ public class MyWebServer {
 
         // wait for a connectiona and then accept it
         while (true) {
-            try {
-                Socket socket = serverSocket.accept();
+            try (Socket socket = serverSocket.accept()){
                 HTTPConnection connection = new HTTPConnection(socket, dir);
                 connection.run();
             }
