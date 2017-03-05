@@ -49,7 +49,7 @@ public class MyWebServer {
         while (true) {
             try {
                 Socket socket = serverSocket.accept();
-                HTTPConnection connection = new HTTPConnection(socket);
+                HTTPConnection connection = new HTTPConnection(socket, dir);
                 connection.run();
             }
             catch (IOException e) {
@@ -60,10 +60,12 @@ public class MyWebServer {
 
     public static class HTTPConnection implements Runnable {
         private Socket socket;
+        private String dir;
         private SimpleDateFormat HTTPDateFormat = new SimpleDateFormat("EEE, d MMM yyyy hh:mm:ss zzz");
 
-        HTTPConnection(Socket socket) {
+        HTTPConnection(Socket socket, String dir) {
             this.socket = socket;
+            this.dir = dir;
         }
 
         public void run() {
@@ -93,7 +95,7 @@ public class MyWebServer {
                 }
 
                 // try to open file
-                File reqFile = new File(fileName);
+                File reqFile = new File(this.dir + '/' + fileName);
                 File file = null;
 
                 // file not found
@@ -108,7 +110,7 @@ public class MyWebServer {
                     String[] files = reqFile.list();
                     for (int i = 0; i < files.length; i++) {
                         if (files[i].equals("index.html")) {
-                            file = new File(fileName + "/index.html");
+                            file = new File(this.dir + "/" + fileName + "/index.html");
                         }
                     }
                 } else {
