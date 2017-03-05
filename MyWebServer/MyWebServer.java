@@ -69,7 +69,9 @@ public class MyWebServer {
     public static class HTTPConnection implements Runnable {
         private Socket socket;
         private String dir;
-        private SimpleDateFormat HTTPDateFormat = new SimpleDateFormat("EEE, d MMM yyyy hh:mm:ss zzz");
+        private SimpleDateFormat RFC822DateFormat = new SimpleDateFormat("EEE, d MMM yyyy hh:mm:ss zzz");
+        private SimpleDateFormat RFC850DateFormat = new SimpleDateFormat("EEEE, d-MMM-yy hh:mm:ss zzz");
+        private SimpleDateFormat ANSICDateFormat = new SimpleDateFormat("EEE MMM d hh:mm:ss yyyy");
 
         HTTPConnection(Socket socket, String dir) {
             this.socket = socket;
@@ -150,7 +152,13 @@ public class MyWebServer {
                         headerLine = bin.readLine();
                     }
                     if (ifModifiedSinceVal != null) {
-                        Date ifModifiedSinceDate = HTTPDateFormat.parse(ifModifiedSinceVal);
+
+                        // Get the date according to any of the acceptable http 1 headers
+                        Date ifModifiedSinceDate = RFC822DateFormat.parse(ifModifiedSinceVal);
+                        if (ifModifiedSinceDate == null) ifModifiedSinceDate = RFC850DateFormat.parse(ifModifiedSinceVal);
+                        if (ifModifiedSinceDate == null) ifModifiedSinceDate = ANSICDateFormat.parse(ifModifiedSinceVal);
+                        if (ifModifiedSinceDate == null) throw new Exception();
+
                         if (ifModifiedSinceDate.before(lastModified)) {
                             header.setStatus("HTTP/1.1 304 Not Modified")
                                 .setLastModified(lastModified)
