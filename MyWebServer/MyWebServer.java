@@ -168,7 +168,7 @@ public class MyWebServer {
                         if (ifModifiedSinceDate == null) // this will freely throw and return a 400
                             ifModifiedSinceDate = ANSICDateFormat.parse(ifModifiedSinceVal);
 
-                        if (ifModifiedSinceDate.before(lastModified)) {
+                        if (ifModifiedSinceDate.after(lastModified)) {
                             header.setStatus("HTTP/1.1 304 Not Modified")
                                 .setLastModified(lastModified)
                                 .setContentLength(file.length());
