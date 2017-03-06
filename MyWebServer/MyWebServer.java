@@ -152,12 +152,21 @@ public class MyWebServer {
                         headerLine = bin.readLine();
                     }
                     if (ifModifiedSinceVal != null) {
-
                         // Get the date according to any of the acceptable http 1 headers
-                        Date ifModifiedSinceDate = RFC822DateFormat.parse(ifModifiedSinceVal);
-                        if (ifModifiedSinceDate == null) ifModifiedSinceDate = RFC850DateFormat.parse(ifModifiedSinceVal);
-                        if (ifModifiedSinceDate == null) ifModifiedSinceDate = ANSICDateFormat.parse(ifModifiedSinceVal);
-                        if (ifModifiedSinceDate == null) throw new Exception();
+                        Date ifModifiedSinceDate = null;
+
+                        try {
+                            ifModifiedSinceDate = RFC822DateFormat.parse(ifModifiedSinceVal);
+                        }
+                        catch (ParseException e) { /**/ }
+                        if (ifModifiedSinceDate == null) {
+                            try {
+                                ifModifiedSinceDate = RFC850DateFormat.parse(ifModifiedSinceVal);
+                            }
+                            catch (ParseException e) { /**/ }
+                        }
+                        if (ifModifiedSinceDate == null) // this will freely throw and return a 400
+                            ifModifiedSinceDate = ANSICDateFormat.parse(ifModifiedSinceVal);
 
                         if (ifModifiedSinceDate.before(lastModified)) {
                             header.setStatus("HTTP/1.1 304 Not Modified")
@@ -211,7 +220,7 @@ public class MyWebServer {
         private StringBuilder header;
         private SimpleDateFormat HTTPDateFormat;
         private Date currentDate;
-        private final String serverName = "Young Money Cash Money: The Server";
+        private final String serverName = "Young Money Cache Money: The Server";
 
         public Header() {
             header = new StringBuilder();
