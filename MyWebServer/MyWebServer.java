@@ -158,12 +158,16 @@ public class MyWebServer {
                         try {
                             ifModifiedSinceDate = RFC822DateFormat.parse(ifModifiedSinceVal);
                         }
-                        catch (ParseException e) { /**/ }
+                        catch (ParseException e) {
+                            ifModifiedSinceDate = null;
+                        }
                         if (ifModifiedSinceDate == null) {
                             try {
                                 ifModifiedSinceDate = RFC850DateFormat.parse(ifModifiedSinceVal);
                             }
-                            catch (ParseException e) { /**/ }
+                            catch (ParseException e) {
+                                ifModifiedSinceDate = null;
+                            }
                         }
                         if (ifModifiedSinceDate == null) // this will freely throw and return a 400
                             ifModifiedSinceDate = ANSICDateFormat.parse(ifModifiedSinceVal);
