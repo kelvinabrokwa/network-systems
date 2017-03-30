@@ -5,9 +5,9 @@ import java.util.Timer;
 class StudentSocketImpl extends BaseSocketImpl {
 
   // SocketImpl data members:
-  //   protected InetAddress address;
-  //   protected int port;
-  //   protected int localport;
+  protected InetAddress address;
+  protected int port;
+  protected int localport;
 
   private Demultiplexer D;
   private Timer tcpTimer;
@@ -25,15 +25,93 @@ class StudentSocketImpl extends BaseSocketImpl {
    * @exception  IOException  if an I/O error occurs when attempting a
    *               connection.
    */
-  public synchronized void connect(InetAddress address, int port) throws IOException{
-    localport = D.getNextAvailablePort();
+  public synchronized void connect(InetAddress address, int port) throws IOException {
+    this.port = port;
+    this.address = address;
+
+    // register connection socket with demultiplexer
+    D.registerConnection(address, localport, port, this);
+
+    // send SYN packet
+    int sourcePort = localport;
+    int destPort = port;
+    int seqNum = 0;
+    int ackNum = 0;
+    boolean ackFlag = false;
+    boolean synFlag = true;
+    boolean finFlag = false;
+    int windowSize = 1024;
+    byte[] data = new byte[0];
+    TCPPacket synPacket = new TCPPacket(
+            sourcePort,
+            destPort,
+            seqNum,
+            ackNum,
+            ackFlag,
+            synFlag,
+            finFlag,
+            windowSize,
+            data
+    );
+    TCPWrapper.send(synPacket, address);
   }
   
   /**
    * Called by Demultiplexer when a packet comes in for this connection
    * @param p The packet that arrived
    */
-  public synchronized void receivePacket(TCPPacket p){
+  public synchronized void receivePacket(TCPPacket p) {
+    System.out.println("Receive Packet server? :");
+    System.out.println(p.toString());
+    /*
+    if (p.synFlag && !p.ackFlag) {
+      // UNREGISTER THE LISTENING SOCKET?!??!?!?!
+
+      // if this is a listening socket
+      StudentSocketImpl connection = new StudentSocketImpl(D);
+      connection.localport = D.getNextAvailablePort();
+      connection.port = p.sourcePort;
+      connection.address = p.sourceAddr;
+
+      // TODO: double check this
+      try {
+        connection.acceptConnection();
+      } catch (IOException e) {
+        System.out.println(e);
+      }
+
+      // reply with SYN-ACK
+      int sourcePort = connection.localport;
+      int destPort = p.sourcePort;
+      int seqNum = 1; // TODO: make random?
+      int ackNum = seqNum + 1;
+      boolean ackFlag = true;
+      boolean synFlag = true;
+      boolean finFlag = false;
+      int windowSize = 1024; // TODO: figure out what this is
+      byte[] data = new byte[0];
+      TCPPacket synAckPacket = new TCPPacket(
+              sourcePort,
+              destPort,
+              seqNum,
+              ackNum,
+              ackFlag,
+              synFlag,
+              finFlag,
+              windowSize,
+              data
+      );
+      TCPWrapper.send(synAckPacket, p.sourceAddr);
+      return;
+    }
+    else if (p.synFlag && p.ackFlag) {
+      // client received SYN-ACK
+      // send ACK
+    }
+    */
+
+    // this is a connection socket
+    // deal with packet
   }
   
   /** 
@@ -44,6 +122,12 @@ class StudentSocketImpl extends BaseSocketImpl {
    * Note that localport is already set prior to this being called.
    */
   public synchronized void acceptConnection() throws IOException {
+    // we are in a client Socket
+    localport = getLocalPort();
+    //System.out.println("------>");
+    //System.out.println(localport);
+    // register as listener socket
+    D.registerListeningSocket(localport, this);
   }
 
   
@@ -93,7 +177,7 @@ class StudentSocketImpl extends BaseSocketImpl {
    * @param ref generic reference to be returned to handleTimer
    */
   private TCPTimerTask createTimerTask(long delay, Object ref){
-    if(tcpTimer == null)
+    if (tcpTimer == null)
       tcpTimer = new Timer(false);
     return new TCPTimerTask(tcpTimer, delay, this, ref);
   }
