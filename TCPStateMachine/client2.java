@@ -2,7 +2,7 @@ import java.net.Socket;
 
 public class client2 {
   public static void main(String[] argv){
-    
+
     if(argv.length!= 2){
       System.err.println("usage: client1 <hostname> <hostport>");
       System.exit(1);
@@ -10,12 +10,12 @@ public class client2 {
 
     try{
       TCPStart.start();
-      
+
       Socket sock = new Socket(argv[0], Integer.parseInt(argv[1]));
 
       System.out.println("got socket "+sock);
-      
-      Thread.sleep(10*1000);
+
+      Thread.sleep(1*1000);
 
       sock.close();
     }
