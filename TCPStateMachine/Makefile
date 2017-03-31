@@ -8,6 +8,6 @@ run-server1:
 run-client1:
 	java -DUDPPORT=8816 client1 bg1 8817
 run-server2:
-	java -DUDPPORT=8816 -DLOSSRATE=0.4 server2 8817
+	java -DUDPPORT=8816 -DLOSSRATE=0.75 server2 8817
 run-client2:
-	java -DUDPPORT=8816 -DLOSSRATE=0.4 client2 bg1 8817
+	java -DUDPPORT=8816 -DLOSSRATE=0.75 client2 bg1 8817

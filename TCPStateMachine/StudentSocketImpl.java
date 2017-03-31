@@ -177,6 +177,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 if (!p.synFlag || !p.ackFlag) {
                     System.out.println("Incorrect message flags for state. In state " + state +
                             " : expected SYN-ACK");
+                    break;
                 }
 
                 // stop the timer
@@ -213,6 +214,15 @@ class StudentSocketImpl extends BaseSocketImpl {
             case SYN_RCVD:
                 // in server
                 // expecting ACK
+
+                if (p.synFlag) {
+                    // keep retransmitting SYN-ACK
+                    System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
+                    System.out.println("Got the following packet instead");
+                    System.out.println(p);
+                    break;
+                }
+
                 if (!p.ackFlag || (p.finFlag || p.synFlag)) {
                     System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
                     System.out.println("Got the following packet instead");
@@ -267,7 +277,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 // this ack is not meant for me
                 if (p.ackFlag) {
                     if (p.seqNum != lastAck) {
-                        return;
+                        break;
                     }
                 }
 
@@ -309,9 +319,10 @@ class StudentSocketImpl extends BaseSocketImpl {
                 break;
 
             case FIN_WAIT_2:
-                // expecting an ACK
+                // expecting an FIN
                 if (!p.finFlag || (p.ackFlag || p.synFlag)) {
                     System.out.println("Incorrect message flags for state. In state " + state + " : expected FIN");
+                    break;
                 }
 
                 // send ACK
@@ -344,10 +355,13 @@ class StudentSocketImpl extends BaseSocketImpl {
                 // expecting an ACK
                 if (!p.ackFlag || (p.finFlag || p.synFlag)) {
                     System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
+                    break;
                 }
 
                 // verify ACK
                 if (p.seqNum != lastAck) {
+                    System.out.println("This is not the ACK you are looking for");
+                    System.out.println(p);
                     break;
                 }
 
@@ -366,7 +380,6 @@ class StudentSocketImpl extends BaseSocketImpl {
                 }
 
                 updateState(State.CLOSED);
-
 
                 break;
         }
