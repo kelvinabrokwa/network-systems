@@ -1,6 +1,7 @@
 import java.net.*;
 import java.io.*;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 class StudentSocketImpl extends BaseSocketImpl {
 
@@ -15,12 +16,15 @@ class StudentSocketImpl extends BaseSocketImpl {
     private int ackNum;
     private int seqNum;
     private int peerSeqNum;
-    private int lastAck;
     private int windowSize = 1;
 
     private State state = State.CLOSED;
 
-    private Hashtable<String, TCPTimerTask> packetTimers = new Hashtable<String, TCPTimerTask>();
+    private TCPPacket synAckAck;
+    private TCPPacket finAck;
+    private TCPTimerTask timeWaitTask;
+
+    private Hashtable<State, TCPTimerTask> packetTimers = new Hashtable<State, TCPTimerTask>();
 
     private enum State {
         LISTENING,
@@ -65,15 +69,17 @@ class StudentSocketImpl extends BaseSocketImpl {
         // register connection socket with demultiplexer
         D.registerConnection(address, localport, port, this);
 
+        updateState(State.SYN_SENT);
+
         // send SYN packet
         int sourcePort = localport;
         int destPort = port;
-        int seqNum = 0;
-        int ackNum = lastAck = 0;
+        int seqNum = this.seqNum = ThreadLocalRandom.current().nextInt(0, 1000);
+        int ackNum = 0;
         boolean ackFlag = false;
         boolean synFlag = true;
         boolean finFlag = false;
-        int windowSize = 1;
+        int windowSize = 1024;
         TCPPacket synPacket = new TCPPacket(
                 sourcePort,
                 destPort,
@@ -86,8 +92,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 null);
 
         sendPacket(synPacket, true);
-
-        updateState(State.SYN_SENT);
+        this.seqNum++;
 
         // wait until state becomes established
         synchronized(this) {
@@ -107,7 +112,8 @@ class StudentSocketImpl extends BaseSocketImpl {
     private synchronized void sendPacket(TCPPacket packet, boolean retransmit) {
         if (retransmit) {
             TCPTimerTask timerTask = createTimerTask(1000, packet);
-            packetTimers.put(Integer.toString(packet.seqNum), timerTask);
+            //packetTimers.put(Integer.toString(packet.seqNum), timerTask);
+            packetTimers.put(this.state, timerTask);
         }
         TCPWrapper.send(packet, address);
     }
@@ -117,270 +123,270 @@ class StudentSocketImpl extends BaseSocketImpl {
      * @param p The packet that arrived
      */
     public synchronized void receivePacket(TCPPacket p) {
-        int sourcePort;
-        int destPort;
-        //int seqNum;
-        int ackNum;
-        boolean ackFlag;
-        boolean synFlag;
-        boolean finFlag;
-        int windowSize;
-        byte[] data;
         TCPPacket packet;
 
         switch (state) {
             case LISTENING:
                 // expect SYN
-                if (!(p.synFlag && !p.ackFlag)) {
-                    System.out.println("Incorrect message flags for state.");
+                if (p.synFlag && !p.ackFlag && !p.finFlag) {
+                    // update state
+                    address = p.sourceAddr;
+                    port = p.sourcePort;
+                    updateState(State.SYN_RCVD);
+
+                    try {
+                        D.unregisterListeningSocket(localport, this);
+                        D.registerConnection(address, localport, port, this);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+
+                    // reply with SYN-ACK
+                    this.peerSeqNum = p.seqNum;
+                    this.seqNum = ThreadLocalRandom.current().nextInt(0, 1000);
+                    this.ackNum = this.peerSeqNum + 1;
+                    
+                    packet = new TCPPacket(
+                            this.localport, // sourcePort
+                            p.sourcePort, // destPort
+                            this.seqNum, // seqNum
+                            this.ackNum, // ackNum
+                            true, //ackFlag
+                            true, // synFlag
+                            false, // finFlag
+                            1024, // windowSize
+                            null // data
+                            );
+                    sendPacket(packet, true);
                 }
-
-                // update state
-                address = p.sourceAddr;
-                port = p.sourcePort;
-                updateState(State.SYN_RCVD);
-
-                try {
-                    D.unregisterListeningSocket(localport, this);
-                    D.registerConnection(address, localport, port, this);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-
-                // reply with SYN-ACK
-                sourcePort = localport;
-                destPort = p.sourcePort;
-                this.peerSeqNum = p.seqNum;
-                this.seqNum = 0;
-                ackNum = lastAck = seqNum + 1;
-                ackFlag = true;
-                synFlag = true;
-                finFlag = false;
-                windowSize = 1024; // TODO: figure out what this is
-                data = null;
-                packet = new TCPPacket(
-                        sourcePort,
-                        destPort,
-                        seqNum,
-                        ackNum,
-                        ackFlag,
-                        synFlag,
-                        finFlag,
-                        windowSize,
-                        data);
-                sendPacket(packet, true);
+                else printWrongPacket(state, p, "SYN");
 
                 break;
 
             case SYN_SENT:
                 // expect SYN-ACK
-                if (!p.synFlag || !p.ackFlag) {
-                    System.out.println("Incorrect message flags for state. In state " + state +
-                            " : expected SYN-ACK");
-                    break;
+                if (p.synFlag && p.ackFlag && !p.finFlag) {
+                    if (p.ackNum != this.seqNum) {
+                        System.out.println("Wrong SYN-ACK. Pack ack: " + 
+                                p.ackNum + ", sock seq num: "+ this.seqNum);
+                        break;
+                    }
+
+                    // stop the timer
+                    packetTimers.get(State.SYN_SENT).cancel();
+
+                    // update state
+                    updateState(State.ESTABLISHED)  ;
+
+                    // send an ACK
+                    this.peerSeqNum = p.seqNum;
+                    this.ackNum = p.seqNum + 1;
+
+                    packet = new TCPPacket(
+                            localport, // sourcePort
+                            p.sourcePort, // destPort
+                            this.seqNum, // seqNum
+                            this.ackNum, // ackNum
+                            true, //ackFlag
+                            false, // synFlag
+                            false, // finFlag
+                            1024, // windowSize
+                            null // data
+                            );
+
+                    this.synAckAck = packet;
+                    sendPacket(packet, false);
                 }
-
-                // stop the timer
-                packetTimers.get(Integer.toString(seqNum)).cancel();
-
-                // send an ACK
-                sourcePort = localport;
-                destPort = p.sourcePort;
-                this.peerSeqNum = p.seqNum;
-                this.seqNum++;
-                ackNum = lastAck = p.seqNum + 1;
-                ackFlag = true;
-                synFlag = false;
-                finFlag = false;
-                windowSize = 1024;
-                data = null;
-                packet = new TCPPacket(
-                        sourcePort,
-                        destPort,
-                        seqNum,
-                        ackNum,
-                        ackFlag,
-                        synFlag,
-                        finFlag,
-                        windowSize,
-                        data);
-                sendPacket(packet, false);
-
-                // update state
-                updateState(State.ESTABLISHED);
+                else printWrongPacket(state, p, "SYN-ACK");
 
                 break;
 
             case SYN_RCVD:
                 // in server
                 // expecting ACK
+                if (p.ackFlag && !p.synFlag && !p.finFlag) {
+                    if (p.seqNum != this.ackNum) {
+                        System.out.println("WRONG SYN-ACK-ACK PACKET: p seq num: " 
+                                + p.seqNum + ", ackNum: " + this.ackNum);
+                        break;
+                    }
+                    // stop the packet timer
+                    packetTimers.get(State.SYN_RCVD).cancel();
 
-                if (p.synFlag) {
-                    // keep retransmitting SYN-ACK
-                    System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
-                    System.out.println("Got the following packet instead");
-                    System.out.println(p);
-                    break;
+                    updateState(State.ESTABLISHED);
                 }
-
-                if (!p.ackFlag || (p.finFlag || p.synFlag)) {
-                    System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
-                    System.out.println("Got the following packet instead");
-                    System.out.println(p);
-                }
-
-                // stop the packet timer
-                packetTimers.get(Integer.toString(p.ackNum - 1)).cancel();
-
-                updateState(State.ESTABLISHED);
+                else printWrongPacket(state, p, "ACK");
 
                 break;
 
             case ESTABLISHED:
+                if (p.ackFlag && p.synFlag && !p.finFlag) {
+                    sendPacket(synAckAck, false);
+                    break;
+                }
                 if (p.finFlag) {
-                    // send ACK
-                    sourcePort = localport;
-                    destPort = p.sourcePort;
-                    this.peerSeqNum = p.seqNum;
-                    this.seqNum++;
-                    ackNum = lastAck = p.seqNum + 1;
-                    ackFlag = true;
-                    synFlag = false;
-                    finFlag = false;
-                    windowSize = 1024;
-                    data = null;
-                    packet = new TCPPacket(
-                            sourcePort,
-                            destPort,
-                            seqNum,
-                            ackNum,
-                            ackFlag,
-                            synFlag,
-                            finFlag,
-                            windowSize,
-                            data);
-                    sendPacket(packet, false);
-
                     updateState(State.CLOSE_WAIT);
+
+                    // send ACK
+                    this.peerSeqNum = p.seqNum;
+                    this.ackNum = p.seqNum + 1;
+                
+                    packet = new TCPPacket(
+                            localport, // sourcePort
+                            p.sourcePort, // destPort
+                            this.seqNum, // seqNum
+                            this.ackNum, // ackNum
+                            true, //ackFlag
+                            false, // synFlag
+                            false, // finFlag
+                            1024, // windowSize
+                            null // data
+                            );
+                    sendPacket(packet, false);
                 }
 
                 break;
 
             case FIN_WAIT_1:
-                // expecting an ACK or a FIN
-                if ((!p.ackFlag && !p.finFlag) || (p.ackFlag && p.finFlag) || p.synFlag) {
-                    System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
-                    System.out.println("Got the following packet instead");
-                    System.out.println(p);
-                }
-
-                // this ack is not meant for me
-                if (p.ackFlag) {
-                    if (p.seqNum != lastAck) {
+                // Packet is an ACK
+                if (p.ackFlag && !p.synFlag && !p.finFlag) {
+                    // Check to make sure this is the right ACK
+                    if (p.ackNum != this.seqNum) {
+                        System.out.println("WRONG ACK");
                         break;
                     }
-                }
+                    // cancel last FIN retransmission
+                    packetTimers.get(State.FIN_WAIT_1).cancel();
+                    
+                    
 
-                // cancel last FIN retransmission
-                packetTimers.get(Integer.toString(seqNum)).cancel();
-
-                if (p.ackFlag) {
                     updateState(State.FIN_WAIT_2);
                 }
-                else if (p.finFlag) {
+                // Packet is a FIN
+                else if (p.finFlag && !p.ackFlag && !p.synFlag) {
                     updateState(State.CLOSING);
 
+                    //packetTimers.get(State.FIN_WAIT_1).cancel();
+
                     // send ACK
-                    sourcePort = localport;
-                    destPort = p.sourcePort;
                     this.peerSeqNum = p.seqNum;
-                    this.seqNum++;
-                    ackNum = lastAck = p.seqNum + 1;
-                    ackFlag = true;
-                    synFlag = false;
-                    finFlag = false;
-                    windowSize = 1024;
-                    data = null;
+                    this.ackNum = this.peerSeqNum + 1;
+            
                     packet = new TCPPacket(
-                            sourcePort,
-                            destPort,
-                            seqNum,
-                            ackNum,
-                            ackFlag,
-                            synFlag,
-                            finFlag,
-                            windowSize,
-                            data);
+                            this.localport, // sourcePort
+                            p.sourcePort, // destPort
+                            this.seqNum, // seqNum
+                            this.ackNum, // ackNum
+                            true, //ackFlag
+                            false, // synFlag
+                            false, // finFlag
+                            1024, // windowSize
+                            null // data
+                            );
+                    this.finAck = packet;
                     sendPacket(packet, false);
-                } else {
-                    System.out.println("Wrong flags for state. Expected ACK or FIN");
                 }
+                // Means server is in SYN_RCVD and needs SYN-ACK-ACK resent
+                else if (p.ackFlag && p.synFlag && !p.finFlag) {
+                    sendPacket(this.synAckAck, false);
+                }
+                else printWrongPacket(state, p, "ACK");
 
                 break;
 
             case FIN_WAIT_2:
-                // expecting an FIN
-                if (!p.finFlag || (p.ackFlag || p.synFlag)) {
-                    System.out.println("Incorrect message flags for state. In state " + state + " : expected FIN");
-                    break;
-                }
+                // expecting a FIN
+                if (p.finFlag && !p.ackFlag && !p.synFlag) {
+                    // send ACK
+                    this.peerSeqNum = p.seqNum;
+                    //this.seqNum++;
+                    this.ackNum = p.seqNum + 1;
+                    
+                    packet = new TCPPacket(
+                            this.localport, // sourcePort
+                            p.sourcePort, // destPort
+                            this.seqNum, // seqNum
+                            this.ackNum, // ackNum
+                            true, //ackFlag
+                            false, // synFlag
+                            false, // finFlag
+                            1024, // windowSize
+                            null // data
+                            );
+                    this.finAck = packet;
+                    sendPacket(packet, false);
 
-                // send ACK
-                sourcePort = localport;
-                destPort = p.sourcePort;
-                this.peerSeqNum = p.seqNum;
-                this.seqNum++;
-                ackNum = lastAck = p.seqNum + 1;
-                ackFlag = true;
-                synFlag = false;
-                finFlag = false;
-                windowSize = 1024;
-                data = null;
-                packet = new TCPPacket(
-                        sourcePort,
-                        destPort,
-                        seqNum,
-                        ackNum,
-                        ackFlag,
-                        synFlag,
-                        finFlag,
-                        windowSize,
-                        data);
-                sendPacket(packet, false);
+                    updateState(State.TIME_WAIT);
+                    this.timeWaitTask = createTimerTask(10 * 1000, State.TIME_WAIT);
+                }
+                else printWrongPacket(state, p, "FIN");
 
                 break;
 
             case LAST_ACK:
+                // expecting an ACK
+                if (p.ackFlag && !p.finFlag && !p.synFlag) {
+                    // verify ACK
+                    if (p.ackNum != this.seqNum) {
+                        System.out.println("WRONG ACK");
+                        System.out.println(p);
+                        break;
+                    }
+
+                    packetTimers.get(State.LAST_ACK).cancel();
+
+                    updateState(State.TIME_WAIT);
+                    this.timeWaitTask = createTimerTask(10 * 1000, State.TIME_WAIT);
+                }
+                else printWrongPacket(state, p, "ACK");
+                
+                break;
+
             case CLOSING:
                 // expecting an ACK
-                if (!p.ackFlag || (p.finFlag || p.synFlag)) {
-                    System.out.println("Incorrect message flags for state. In state " + state + " : expected ACK");
-                    break;
+                if (p.ackFlag && !p.finFlag && !p.synFlag) {
+                    // verify ACK
+                    if (p.ackNum != this.seqNum) {
+                        System.out.println("This is not the ACK you are looking for");
+                        System.out.println(p);
+                        break;
+                    }
+
+                    packetTimers.get(State.FIN_WAIT_1).cancel();
+
+                    updateState(State.TIME_WAIT);
+                    this.timeWaitTask = createTimerTask(10 * 1000, State.TIME_WAIT);
                 }
-
-                // verify ACK
-                if (p.seqNum != lastAck) {
-                    System.out.println("This is not the ACK you are looking for");
-                    System.out.println(p);
-                    break;
+                else if (p.finFlag && !p.ackFlag && !p.synFlag) {
+                    sendPacket(this.finAck, false);
                 }
+                else printWrongPacket(state, p, "ACK");
 
-                updateState(State.TIME_WAIT);
+                break;
 
-                try {
-                    Thread.sleep(1*1000);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+            case TIME_WAIT:
+                if (p.finFlag && !p.ackFlag && !p.synFlag) {
+                    timeWaitTask.cancel();
+
+                    this.peerSeqNum = p.seqNum;
+                    this.ackNum= p.seqNum + 1;
+                    
+                    packet = new TCPPacket(
+                            this.localport, // sourcePort
+                            p.sourcePort, // destPort
+                            this.seqNum, // seqNum
+                            this.ackNum, // ackNum
+                            true, //ackFlag
+                            false, // synFlag
+                            false, // finFlag
+                            1024, // windowSize
+                            null // data
+                            );
+                    sendPacket(packet, false);
+
+                    System.out.println("RESTARTING TIME_WAIT");
+                    this.timeWaitTask = createTimerTask(10 * 1000, State.TIME_WAIT);
                 }
-
-                try {
-                    D.unregisterConnection(address, localport, port, this);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-
-                updateState(State.CLOSED);
-
                 break;
         }
 
@@ -457,30 +463,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 return;
             }
 
-            // send a FIN packet
-            int sourcePort = localport;
-            int destPort = port;
-            this.seqNum++;
-            int ackNum = lastAck; //this.peerSeqNum + 1;
-            boolean ackFlag = false;
-            boolean synFlag = false;
-            boolean finFlag = true;
-            int windowSize = this.windowSize;
-            byte[] data = null;
-            TCPPacket finPacket = new TCPPacket(
-                    sourcePort,
-                    destPort,
-                    seqNum,
-                    ackNum,
-                    ackFlag,
-                    synFlag,
-                    finFlag,
-                    windowSize,
-                    data);
-
-
-            System.out.println(seqNum);
-            sendPacket(finPacket, true);
+            System.out.println("\n CLOSE CALLED");
 
             if (state == State.CLOSE_WAIT) {
                 updateState(State.LAST_ACK);
@@ -489,6 +472,29 @@ class StudentSocketImpl extends BaseSocketImpl {
             } else {
                 System.out.println("WRONG STATE TO BE CALLING CLOSE SON. CURRENT STATE: " + state);
             }
+
+            // send a FIN packet
+            int sourcePort = localport;
+            int destPort = port;
+            boolean ackFlag = false;
+            boolean synFlag = false;
+            boolean finFlag = true;
+            int windowSize = this.windowSize;
+            byte[] data = null;
+            TCPPacket finPacket = new TCPPacket(
+                    sourcePort,
+                    destPort,
+                    this.seqNum,
+                    this.ackNum,
+                    ackFlag,
+                    synFlag,
+                    finFlag,
+                    windowSize,
+                    data);
+
+
+            sendPacket(finPacket, true);
+            this.seqNum++;
         } else {
             // this is a ServerSocket
             updateState(State.CLOSED);
@@ -513,12 +519,38 @@ class StudentSocketImpl extends BaseSocketImpl {
      * information.
      */
     public synchronized void handleTimer(Object packet){
+        if (this.state == State.TIME_WAIT) {
+            tcpTimer.cancel();
+            tcpTimer = null;
+            
+            try {
+                this.D.unregisterConnection(address, localport, port, this);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            updateState(State.CLOSED);
+            return;
+        }
+        
+        
         // this must run only once the last timer (30 second timer) has expired
         tcpTimer.cancel();
         tcpTimer = null;
 
         System.out.println("THE FOLLOWING PACKET TIMED OUT:");
         System.out.println((TCPPacket)packet);
+        System.out.println("RESENDING PAKCET");
         sendPacket((TCPPacket)packet, true);
+        //this.notifyAll();
+    }
+
+    /**
+     * 
+     */
+    private synchronized void printWrongPacket(State currState, TCPPacket p, String expected) {
+        System.out.println("Incorrect message flags for state. In state " + currState + " : expected " + expected);
+        System.out.println("Got the following packet instead");
+        System.out.println(p);
     }
 }
