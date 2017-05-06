@@ -12,8 +12,8 @@ class StudentSocketImpl extends BaseSocketImpl {
     private Demultiplexer D;
     private Timer tcpTimer;
     private int state;
-    private int seqNum;
-    private int ackNum;
+    private int seqNum; // seqNum of next packet to send
+    private int ackNum; // next expected packet seqNum
     private Hashtable<Integer, TCPTimerTask> timerList; //holds the timers for sent packets
     private Hashtable<Integer, TCPPacket> packetList;	  //holds the packets associated with each timer
     //(for timer identification)
@@ -118,6 +118,10 @@ class StudentSocketImpl extends BaseSocketImpl {
         System.out.println("!!! " + stateString(state) + "->" + stateString(newState));
         state = newState;
 
+        notifyAll(); // wake up people waiting on state change
+                     // if a user attempts to send a data packet before
+                     // ESTABLISHED state it sleeps until state is ESTABLISHED
+
         if(newState == CLOSE_WAIT && wantsToClose && !finSent){
             try{
                 close();
@@ -130,6 +134,19 @@ class StudentSocketImpl extends BaseSocketImpl {
     }
 
     private synchronized void sendPacket(TCPPacket inPacket, boolean resend){
+        if (!(inPacket.ackFlag && !inPacket.synFlag)) { //  dont create timers for ACK packets
+            // create timer
+            timerList.put(new Integer(inPacket.seqNum), createTimerTask(1000, inPacket));
+            // add to packet list
+            packetList.put(new Integer(inPacket.seqNum), inPacket);
+        }
+
+        // send the packet
+        TCPWrapper.send(inPacket, address);
+
+        /* ---------------------------------------------------------------------- */
+
+        /*
         if(inPacket.ackFlag == true && inPacket.synFlag == false){
             inPacket.seqNum = -2;
         }
@@ -162,6 +179,7 @@ class StudentSocketImpl extends BaseSocketImpl {
             catch(NoSuchElementException nsee){
             }
         }
+        */
     }
 
     private synchronized void incrementCounters(TCPPacket p){
@@ -178,6 +196,7 @@ class StudentSocketImpl extends BaseSocketImpl {
             timerList.get(state).cancel();
             timerList.remove(state);
             packetList.remove(state);
+
         }
         else{
             //the only time the state changes before an ack is received... so it must
@@ -185,6 +204,19 @@ class StudentSocketImpl extends BaseSocketImpl {
             timerList.get(FIN_WAIT_1).cancel();
             timerList.remove(FIN_WAIT_1);
             packetList.remove(FIN_WAIT_1);
+
+        }
+    }
+
+    private synchronized void cancelPacketTimer(int ackNum) {
+        Enumeration<Integer> keys = timerList.keys();
+        while (keys.hasMoreElements()) {
+            int seqNum = keys.nextElement();
+            if (ackNum > seqNum) {
+                timerList.get(seqNum).cancel();
+                timerList.remove(seqNum);
+                packetList.remove(seqNum);
+            }
         }
     }
 
@@ -207,6 +239,7 @@ class StudentSocketImpl extends BaseSocketImpl {
 
         seqNum = 100;
         TCPPacket synPacket = new TCPPacket(localport, port, seqNum, ackNum, false, true, false, 1, null);
+        seqNum += 1; // update seqNum
         changeToState(SYN_SENT);
         sendPacket(synPacket, false);
     }
@@ -222,13 +255,17 @@ class StudentSocketImpl extends BaseSocketImpl {
         System.out.println("Packet received from address " + p.sourceAddr + " with seqNum " + p.seqNum + " is being processed.");
         System.out.print("The packet is ");
 
-        if(p.ackFlag == true && p.synFlag == true){
+        // received SYN-ACK
+        if (p.ackFlag == true && p.synFlag == true) {
             System.out.println("a syn-ack.");
 
             if(state == SYN_SENT){
                 //client state
-                incrementCounters(p);
-                cancelPacketTimer();
+                //incrementCounters(p);
+                //cancelPacketTimer();
+                // cancel SYN-ACK timer
+                cancelPacketTimer(p.ackNum);
+                ackNum = p.seqNum + 1; // update ackNum :  next expected seqNum
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(ESTABLISHED);
                 sendPacket(ackPacket, false);
@@ -244,32 +281,46 @@ class StudentSocketImpl extends BaseSocketImpl {
                 sendPacket(ackPacket, false);
             }
         }
-        else if(p.ackFlag == true){
+
+        // received ACK
+        else if (p.ackFlag == true) {
             System.out.println("an ack.");
             //for the love of God, do not incrementCounters(p) in here
 
             if(state == SYN_RCVD){
                 //server state
-                cancelPacketTimer();
+                //cancelPacketTimer();
+                cancelPacketTimer(p.ackNum);
                 changeToState(ESTABLISHED);
             }
             else if(state == FIN_WAIT_1){
                 //client state
-                cancelPacketTimer();
+                //cancelPacketTimer();
+                cancelPacketTimer(p.ackNum);
                 changeToState(FIN_WAIT_2);
             }
             else if(state == LAST_ACK){
                 //server state
-                cancelPacketTimer();
+                //cancelPacketTimer();
+                cancelPacketTimer(p.ackNum);
                 changeToState(TIME_WAIT);
             }
             else if(state == CLOSING){
                 //client or server state
-                cancelPacketTimer();
+                //cancelPacketTimer();
+                cancelPacketTimer(p.ackNum);
                 changeToState(TIME_WAIT);
             }
+            else if (state == ESTABLISHED) {
+                // client or server state
+                // ACKing a data packet
+                // cancel timer of all packets with seqNum < p.ackNum
+                cancelPacketTimer(p.ackNum);
+            }
         }
-        else if(p.synFlag == true){
+
+        // received SYN
+        else if (p.synFlag == true) {
             System.out.println("a syn.");
 
             if(state == LISTEN){
@@ -285,33 +336,38 @@ class StudentSocketImpl extends BaseSocketImpl {
                 this.address = p.sourceAddr;
                 this.port = p.sourcePort;
 
-                incrementCounters(p);
+                //incrementCounters(p);
+                // send ACK
+                ackNum = p.seqNum + 1;
                 TCPPacket synackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, true, false, 1, null);
-                changeToState(SYN_RCVD);
+                seqNum = seqNum + 1;
                 sendPacket(synackPacket, false);
+                changeToState(SYN_RCVD);
             }
 
         }
-        else if(p.finFlag == true){
+
+        // received FIN
+        else if (p.finFlag == true){
             System.out.println("a fin.");
 
             if(state == ESTABLISHED){
                 //server state
-                incrementCounters(p);
+                //incrementCounters(p);
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(CLOSE_WAIT);
                 sendPacket(ackPacket, false);
             }
             else if(state == FIN_WAIT_1){
                 //client state or server state
-                incrementCounters(p);
+                //incrementCounters(p);
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(CLOSING);
                 sendPacket(ackPacket, false);
             }
             else if(state == FIN_WAIT_2){
                 //client state
-                incrementCounters(p);
+                //incrementCounters(p);
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(TIME_WAIT);
                 sendPacket(ackPacket, false);
@@ -332,8 +388,30 @@ class StudentSocketImpl extends BaseSocketImpl {
                 sendPacket(ackPacket, false);
             }
         }
-        else{
+
+        // received DATA packet
+        else {
             System.out.println("a chunk of data.");
+            System.out.println(p.data);
+
+            if (p.seqNum != ackNum) {
+                System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + ackNum);
+                return;
+            }
+
+
+            // ack data packet
+            int seqNum = ackNum; // doesn't really matter...maybe?
+            int ackNum;
+            if (p.seqNum == this.ackNum) { // this is the packet we were expecting
+                ackNum = p.seqNum + p.data.length; // ack for next packet
+                // write new data to buffer
+                recvBuffer.append(p.data, 0, p.data.length);
+            } else {
+                ackNum = this.ackNum; // re ACK the expected packet
+            }
+            TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
+            sendPacket(ackPacket, false);
         }
     }
 
@@ -425,6 +503,7 @@ class StudentSocketImpl extends BaseSocketImpl {
         }
         else{	//its a packet that needs to be resent
             System.out.println("XXX Resending Packet");
+            System.out.println((TCPPacket)ref);
             sendPacket((TCPPacket)ref, true);
         }
     }
@@ -433,6 +512,8 @@ class StudentSocketImpl extends BaseSocketImpl {
      * initialize buffers and set up sequence numbers
      */
     private void initBuffers(){
+        sendBuffer = new InfiniteBuffer();
+        recvBuffer = new InfiniteBuffer();
     }
 
     /**
@@ -454,6 +535,46 @@ class StudentSocketImpl extends BaseSocketImpl {
      * @param length number of bytes to copy
      */
     synchronized void dataFromApp(byte[] buffer, int length){
+        while (state != ESTABLISHED) {
+            try {
+                wait();
+            }
+            catch (InterruptedException e){
+                System.err.println("Error occured when trying to wait.");
+            }
+        }
+        sendData(buffer, length);
+    }
+
+    private void sendData(byte[] buffer, int len) {
+        int i = 0;
+        while (i < len) {
+            int size = Math.min(len - i, 1000);
+            byte[] data = new byte[size];
+            for (int j = 0; j < size; j++)
+                data[j + i] = data[i];
+            // the following ackNum doesn't matter since it isn't an ack packet
+            TCPPacket dataPacket = new TCPPacket(localport, port, seqNum, 0, false, false, false, 1, data);
+            seqNum = seqNum + size;
+            sendPacket(dataPacket, false);
+            i += size;
+        }
+    }
+
+    /**
+     * Send data from sendBuffer
+     */
+    private void sendData() {
+        byte[] data = new byte[1000];
+        while (sendBuffer.getBase() != sendBuffer.getNext()) {
+            int base = sendBuffer.getBase();
+            int next = sendBuffer.getNext();
+            int len = 1000; // Math.min(1000, next - base);
+            sendBuffer.copyOut(data, base, len);
+            sendBuffer.advance(len);
+            //TCPPacket dataPacket = new TCPPacket(localport, port, , , false, false, false, 1, data);
+            //sendPacket(dataPacket);
+        }
     }
 
     /**
