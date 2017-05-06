@@ -392,13 +392,7 @@ class StudentSocketImpl extends BaseSocketImpl {
         // received DATA packet
         else {
             System.out.println("a chunk of data.");
-            System.out.println(p.data);
-
-            if (p.seqNum != ackNum) {
-                System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + ackNum);
-                return;
-            }
-
+            System.out.println(new String(p.data));
 
             // ack data packet
             int seqNum = ackNum; // doesn't really matter...maybe?
@@ -408,6 +402,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 // write new data to buffer
                 recvBuffer.append(p.data, 0, p.data.length);
             } else {
+                System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + this.ackNum);
                 ackNum = this.ackNum; // re ACK the expected packet
             }
             TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
@@ -552,7 +547,7 @@ class StudentSocketImpl extends BaseSocketImpl {
             int size = Math.min(len - i, 1000);
             byte[] data = new byte[size];
             for (int j = 0; j < size; j++)
-                data[j + i] = data[i];
+                data[j] = buffer[i + j];
             // the following ackNum doesn't matter since it isn't an ack packet
             TCPPacket dataPacket = new TCPPacket(localport, port, seqNum, 0, false, false, false, 1, data);
             seqNum = seqNum + size;
