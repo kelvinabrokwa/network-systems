@@ -143,43 +143,6 @@ class StudentSocketImpl extends BaseSocketImpl {
 
         // send the packet
         TCPWrapper.send(inPacket, address);
-
-        /* ---------------------------------------------------------------------- */
-
-        /*
-        if(inPacket.ackFlag == true && inPacket.synFlag == false){
-            inPacket.seqNum = -2;
-        }
-
-        if(resend == false){ //new timer, and requires the current state as a key
-            TCPWrapper.send(inPacket, address);
-
-            //only do timers for syns, syn-acks, and fins
-            if(inPacket.synFlag == true || inPacket.finFlag == true){
-                System.out.println("Creating new TimerTask at state " + stateString(state));
-                timerList.put(new Integer(state),createTimerTask(1000, inPacket));
-                packetList.put(new Integer(state), inPacket);
-            }
-        }
-        else{ //the packet is for resending, and requires the original state as the key
-            Enumeration keyList = timerList.keys();
-            Integer currKey = new Integer(-1);
-            try{
-                for(int i = 0; i<10; i++){
-                    currKey = (Integer)keyList.nextElement();
-
-                    if(packetList.get(currKey) == inPacket){
-                        System.out.println("Recreating TimerTask from state " + stateString(currKey));
-                        TCPWrapper.send(inPacket, address);
-                        timerList.put(currKey,createTimerTask(1000, inPacket));
-                        break;
-                    }
-                }
-            }
-            catch(NoSuchElementException nsee){
-            }
-        }
-        */
     }
 
     private synchronized void incrementCounters(TCPPacket p){
@@ -392,20 +355,18 @@ class StudentSocketImpl extends BaseSocketImpl {
         // received DATA packet
         else {
             System.out.println("a chunk of data.");
-            System.out.println(new String(p.data));
+            //System.out.println(new String(p.data));
 
             // ack data packet
-            int seqNum = ackNum; // doesn't really matter...maybe?
-            int ackNum;
-            if (p.seqNum == this.ackNum) { // this is the packet we were expecting
-                this.ackNum = ackNum = p.seqNum + p.data.length; // ack for next packet
-                // write new data to buffer
-                recvBuffer.append(p.data, 0, p.data.length);
+            if (p.seqNum == ackNum) { // this is the packet we were expecting
+                ackNum = p.seqNum + p.data.length; // ack for next packet
+                recvBuffer.append(p.data, 0, p.data.length); // write new data to buffer
+                notifyAll(); // in case someone is trying to read from an empty buffer
             } else {
-                System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + this.ackNum);
-                ackNum = this.ackNum; // re ACK the expected packet
+                System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + ackNum);
             }
-            TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
+            // the following seqNum doesn't matter
+            TCPPacket ackPacket = new TCPPacket(localport, port, 0, ackNum, true, false, false, 1, null);
             sendPacket(ackPacket, false);
         }
     }
@@ -425,10 +386,10 @@ class StudentSocketImpl extends BaseSocketImpl {
 
         seqNum = 10000;
 
-        try{
+        try {
             this.wait();
         }
-        catch(InterruptedException e){
+        catch (InterruptedException e) {
             System.err.println("Error occured when trying to wait.");
         }
     }
@@ -532,11 +493,12 @@ class StudentSocketImpl extends BaseSocketImpl {
             }
         }
 
+        byte[] b = new byte[1];
         for (; n < length && recvBuffer.getBase() != recvBuffer.getNext(); n++) {
-            recvBuffer.copyOut(buffer, recvBuffer.getBase(), 1);
+            recvBuffer.copyOut(b, recvBuffer.getBase(), 1);
+            buffer[n] = b[0];
             recvBuffer.advance(1);
         }
-        System.out.println(new String(buffer));
         return n;
     }
 
@@ -555,37 +517,31 @@ class StudentSocketImpl extends BaseSocketImpl {
                 System.err.println("Error occured when trying to wait.");
             }
         }
-        sendData(buffer, length);
-    }
-
-    private void sendData(byte[] buffer, int len) {
-        int i = 0;
-        while (i < len) {
-            int size = Math.min(len - i, 1000);
-            byte[] data = new byte[size];
-            for (int j = 0; j < size; j++)
-                data[j] = buffer[i + j];
-            // the following ackNum doesn't matter since it isn't an ack packet
-            TCPPacket dataPacket = new TCPPacket(localport, port, seqNum, 0, false, false, false, 1, data);
-            seqNum = seqNum + size;
-            sendPacket(dataPacket, false);
-            i += size;
-        }
+        sendBuffer.append(buffer, 0, length);
+        sendData();
     }
 
     /**
-     * Send data from sendBuffer
+     *
      */
     private void sendData() {
-        byte[] data = new byte[1000];
         while (sendBuffer.getBase() != sendBuffer.getNext()) {
-            int base = sendBuffer.getBase();
-            int next = sendBuffer.getNext();
-            int len = 1000; // Math.min(1000, next - base);
-            sendBuffer.copyOut(data, base, len);
-            sendBuffer.advance(len);
-            //TCPPacket dataPacket = new TCPPacket(localport, port, , , false, false, false, 1, data);
-            //sendPacket(dataPacket);
+            List<Byte> data = new ArrayList<Byte>();
+            byte[] b = new byte[1];
+            int len = 0;
+            for (; len < 1000 && sendBuffer.getBase() != sendBuffer.getNext(); len++) {
+               sendBuffer.copyOut(b, sendBuffer.getBase(), 1);
+               data.add(b[0]);
+               sendBuffer.advance(1);
+            }
+            if (len > 0) {
+                byte[] d = new byte[data.size()];
+                for (int i = 0; i < data.size(); i++)
+                    d[i] = data.get(i);
+                TCPPacket dataPacket = new TCPPacket(localport, port, seqNum, 0, false, false, false, 1, d);
+                seqNum = seqNum + len;
+                sendPacket(dataPacket, false);
+            }
         }
     }
 
@@ -642,18 +598,5 @@ class StudentSocketImpl extends BaseSocketImpl {
         notifyAll();
     }
     */
-
-    /**
-     * handle timer expiration (called by TCPTimerTask)
-     * @param ref Generic reference that can be used by the timer to return
-     * information.
-     */
-    /*
-    public synchronized void handleTimer(Object ref){
-
-        // this must run only once the last timer (30 second timer) has expired
-        tcpTimer.cancel();
-        tcpTimer = null;
-    }
-    */
 }
+
