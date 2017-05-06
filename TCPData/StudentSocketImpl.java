@@ -398,7 +398,7 @@ class StudentSocketImpl extends BaseSocketImpl {
             int seqNum = ackNum; // doesn't really matter...maybe?
             int ackNum;
             if (p.seqNum == this.ackNum) { // this is the packet we were expecting
-                ackNum = p.seqNum + p.data.length; // ack for next packet
+                this.ackNum = ackNum = p.seqNum + p.data.length; // ack for next packet
                 // write new data to buffer
                 recvBuffer.append(p.data, 0, p.data.length);
             } else {
@@ -520,7 +520,24 @@ class StudentSocketImpl extends BaseSocketImpl {
      * @return number of bytes copied (by definition > 0)
      */
     synchronized int getData(byte[] buffer, int length){
-        return 0;
+        int n = 0;
+
+        // wait until something is in the buffer
+        while (recvBuffer.getBase() == recvBuffer.getNext()) {
+            try {
+                wait();
+            }
+            catch (InterruptedException e) {
+                System.err.println("Error occured when trying to wait");
+            }
+        }
+
+        for (; n < length && recvBuffer.getBase() != recvBuffer.getNext(); n++) {
+            recvBuffer.copyOut(buffer, recvBuffer.getBase(), 1);
+            recvBuffer.advance(1);
+        }
+        System.out.println(new String(buffer));
+        return n;
     }
 
     /**
