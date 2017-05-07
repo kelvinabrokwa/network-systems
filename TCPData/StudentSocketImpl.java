@@ -137,14 +137,6 @@ class StudentSocketImpl extends BaseSocketImpl {
 
     private synchronized void sendPacket(TCPPacket inPacket, boolean resend){
         if (!(inPacket.ackFlag && !inPacket.synFlag)) { //  dont create timers for ACK packets
-            while (packetList.size() >= windowSize) {
-                try {
-                    wait();
-                }
-                catch (InterruptedException e) {
-                    System.err.println("Error trying to wait");
-                }
-            }
             // create timer
             timerList.put(new Integer(inPacket.seqNum), createTimerTask(1000, inPacket));
             // add to packet list
@@ -495,9 +487,13 @@ class StudentSocketImpl extends BaseSocketImpl {
     synchronized int getData(byte[] buffer, int length){
         int n = 0;
 
+        if (terminating)
+            return 0;
+
         // wait until something is in the buffer
         while (recvBuffer.getBase() == recvBuffer.getNext() && !terminating) {
             try {
+                //System.out.println("~ Waiting until something is in the buffer");
                 wait();
             }
             catch (InterruptedException e) {
@@ -527,6 +523,7 @@ class StudentSocketImpl extends BaseSocketImpl {
     synchronized void dataFromApp(byte[] buffer, int length){
         while (state != ESTABLISHED) {
             try {
+                //System.out.println("~ Waiting for state to be ESTABLISHED");
                 wait();
             }
             catch (InterruptedException e){
