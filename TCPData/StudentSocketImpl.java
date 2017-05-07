@@ -46,6 +46,8 @@ class StudentSocketImpl extends BaseSocketImpl {
     private InfiniteBuffer sendBuffer;
     private InfiniteBuffer recvBuffer;
 
+    private static final int windowSize = 8;
+
     StudentSocketImpl(Demultiplexer D) {  // default constructor
         this.D = D;
         state = CLOSED;
@@ -122,19 +124,27 @@ class StudentSocketImpl extends BaseSocketImpl {
                      // if a user attempts to send a data packet before
                      // ESTABLISHED state it sleeps until state is ESTABLISHED
 
-        if(newState == CLOSE_WAIT && wantsToClose && !finSent){
+        if (newState == CLOSE_WAIT && wantsToClose && !finSent) {
             try{
                 close();
             }
-            catch(IOException ioe){}
+            catch (IOException ioe) {}
         }
-        else if(newState == TIME_WAIT){
+        else if (newState == TIME_WAIT) {
             createTimerTask(30000, null);
         }
     }
 
     private synchronized void sendPacket(TCPPacket inPacket, boolean resend){
         if (!(inPacket.ackFlag && !inPacket.synFlag)) { //  dont create timers for ACK packets
+            while (packetList.size() >= windowSize) {
+                try {
+                    wait();
+                }
+                catch (InterruptedException e) {
+                    System.err.println("Error trying to wait");
+                }
+            }
             // create timer
             timerList.put(new Integer(inPacket.seqNum), createTimerTask(1000, inPacket));
             // add to packet list
@@ -181,6 +191,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 packetList.remove(seqNum);
             }
         }
+        notifyAll(); // wake up send packet if it this is beyond the window
     }
 
     /**
@@ -202,7 +213,7 @@ class StudentSocketImpl extends BaseSocketImpl {
 
         seqNum = 100;
         TCPPacket synPacket = new TCPPacket(localport, port, seqNum, ackNum, false, true, false, 1, null);
-        seqNum += 1; // update seqNum
+        seqNum += 1;
         changeToState(SYN_SENT);
         sendPacket(synPacket, false);
     }
@@ -317,6 +328,11 @@ class StudentSocketImpl extends BaseSocketImpl {
             if(state == ESTABLISHED){
                 //server state
                 //incrementCounters(p);
+                if (p.seqNum == ackNum) {
+                    ackNum = p.seqNum + 1; // TODO: double check this
+                } else {
+                    System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + ackNum);
+                }
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(CLOSE_WAIT);
                 sendPacket(ackPacket, false);
@@ -324,6 +340,25 @@ class StudentSocketImpl extends BaseSocketImpl {
             else if(state == FIN_WAIT_1){
                 //client state or server state
                 //incrementCounters(p);
+
+                if (p.seqNum == ackNum) {
+                    ackNum = p.seqNum + 1;
+                    // remove FIN timer
+                    Enumeration<Integer> keys = timerList.keys();
+                    while (keys.hasMoreElements()) {
+                        int seqNum = keys.nextElement();
+                        TCPPacket packet = packetList.get(seqNum);
+                        if (packet.finFlag) {
+                            timerList.get(seqNum).cancel();
+                            timerList.remove(seqNum);
+                            packetList.remove(seqNum);
+                        }
+                    }
+                } else {
+                    System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + ackNum);
+                }
+
+                // ACK the FIN
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(CLOSING);
                 sendPacket(ackPacket, false);
@@ -331,6 +366,25 @@ class StudentSocketImpl extends BaseSocketImpl {
             else if(state == FIN_WAIT_2){
                 //client state
                 //incrementCounters(p);
+
+                if (p.seqNum == ackNum) {
+                    ackNum = p.seqNum + 1;
+                    // remove FIN timer
+                    Enumeration<Integer> keys = timerList.keys();
+                    while (keys.hasMoreElements()) {
+                        int seqNum = keys.nextElement();
+                        TCPPacket packet = packetList.get(seqNum);
+                        if (packet.finFlag) {
+                            timerList.get(seqNum).cancel();
+                            timerList.remove(seqNum);
+                            packetList.remove(seqNum);
+                        }
+                    }
+                } else {
+                    System.out.println("This was not the expected packet: p.seqNum = " + p.seqNum + " - last ackNum = " + ackNum);
+                }
+
+                // ACK the FIN
                 TCPPacket ackPacket = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 1, null);
                 changeToState(TIME_WAIT);
                 sendPacket(ackPacket, false);
@@ -394,37 +448,6 @@ class StudentSocketImpl extends BaseSocketImpl {
         }
     }
 
-    /**
-     * Closes this socket.
-     *
-     * @exception  IOException  if an I/O error occurs when closing this socket.
-     */
-    public synchronized void close() throws IOException {
-
-        System.out.println("*** close() was called by the application.");
-
-        if(state == ESTABLISHED){
-            //client state
-            TCPPacket finPacket = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
-            changeToState(FIN_WAIT_1);
-            sendPacket(finPacket, false);
-            finSent = true;
-        }
-        else if(state == CLOSE_WAIT){
-            //server state
-            TCPPacket finPacket = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
-            changeToState(LAST_ACK);
-            sendPacket(finPacket, false);
-            finSent = true;
-        }
-        else{
-            System.out.println("Attempted to close while not established (ESTABLISHED) or waiting to close (CLOSE_WAIT)");
-            //timer task here... try the closing process again
-            wantsToClose = true;
-        }
-
-        //returns immediately to the application
-    }
 
     /**
      * create TCPTimerTask instance, handling tcpTimer creation
@@ -484,7 +507,7 @@ class StudentSocketImpl extends BaseSocketImpl {
         int n = 0;
 
         // wait until something is in the buffer
-        while (recvBuffer.getBase() == recvBuffer.getNext()) {
+        while (recvBuffer.getBase() == recvBuffer.getNext() && !terminating) {
             try {
                 wait();
             }
@@ -492,6 +515,9 @@ class StudentSocketImpl extends BaseSocketImpl {
                 System.err.println("Error occured when trying to wait");
             }
         }
+
+        if (terminating)
+            return 0;
 
         byte[] b = new byte[1];
         for (; n < length && recvBuffer.getBase() != recvBuffer.getNext(); n++) {
@@ -573,6 +599,55 @@ class StudentSocketImpl extends BaseSocketImpl {
         return appOS;
     }
 
+    /**
+     * Closes this socket.
+     *
+     * @exception  IOException  if an I/O error occurs when closing this socket.
+     */
+    public synchronized void close() throws IOException {
+
+        System.out.println("*** close() was called by the application.");
+
+        if (address == null)
+            return;
+
+        if (state == ESTABLISHED){
+            //client state
+            TCPPacket finPacket = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
+            seqNum += 1;
+            changeToState(FIN_WAIT_1);
+            sendPacket(finPacket, false);
+            finSent = true;
+        }
+        else if (state == CLOSE_WAIT){
+            //server state
+            TCPPacket finPacket = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
+            seqNum += 1;
+            changeToState(LAST_ACK);
+            sendPacket(finPacket, false);
+            finSent = true;
+        }
+        else {
+            System.out.println("Attempted to close while not established (ESTABLISHED) or waiting to close (CLOSE_WAIT)");
+            //timer task here... try the closing process again
+            wantsToClose = true;
+        }
+
+        terminating = true;
+
+        while (!reader.tryClose()) {
+            notifyAll();
+            try {
+                wait(1000);
+            }
+            catch (InterruptedException e) {}
+        }
+        writer.close();
+
+        notifyAll();
+
+        //returns immediately to the application
+    }
 
     /**
      * Closes this socket.
