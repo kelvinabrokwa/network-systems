@@ -261,35 +261,23 @@ class StudentSocketImpl extends BaseSocketImpl {
             System.out.println("an ack.");
             //for the love of God, do not incrementCounters(p) in here
 
+            cancelPacketTimer(p.ackNum);
+
             if(state == SYN_RCVD){
                 //server state
-                //cancelPacketTimer();
-                cancelPacketTimer(p.ackNum);
                 changeToState(ESTABLISHED);
             }
             else if(state == FIN_WAIT_1){
                 //client state
-                //cancelPacketTimer();
-                cancelPacketTimer(p.ackNum);
                 changeToState(FIN_WAIT_2);
             }
             else if(state == LAST_ACK){
                 //server state
-                //cancelPacketTimer();
-                cancelPacketTimer(p.ackNum);
                 changeToState(TIME_WAIT);
             }
             else if(state == CLOSING){
                 //client or server state
-                //cancelPacketTimer();
-                cancelPacketTimer(p.ackNum);
                 changeToState(TIME_WAIT);
-            }
-            else if (state == ESTABLISHED) {
-                // client or server state
-                // ACKing a data packet
-                // cancel timer of all packets with seqNum < p.ackNum
-                cancelPacketTimer(p.ackNum);
             }
         }
 
@@ -414,6 +402,7 @@ class StudentSocketImpl extends BaseSocketImpl {
             // ack data packet
             if (p.seqNum == ackNum) { // this is the packet we were expecting
                 ackNum = p.seqNum + p.data.length; // ack for next packet
+                System.out.println("[TEST 3] received data: " + new String(p.data));
                 recvBuffer.append(p.data, 0, p.data.length); // write new data to buffer
                 notifyAll(); // in case someone is trying to read from an empty buffer
             } else {
@@ -525,6 +514,7 @@ class StudentSocketImpl extends BaseSocketImpl {
             buffer[n] = b[0];
             recvBuffer.advance(1);
         }
+        System.out.println("[TEST 4] returning from recvBuffer: " + new String(buffer));
         return n;
     }
 
@@ -543,6 +533,7 @@ class StudentSocketImpl extends BaseSocketImpl {
                 System.err.println("Error occured when trying to wait.");
             }
         }
+        System.out.println("[TEST 2] inserted into buffer: " + new String(buffer));
         sendBuffer.append(buffer, 0, length);
         sendData();
     }
